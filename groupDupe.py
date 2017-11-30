@@ -1,4 +1,4 @@
-import os, time, MySQLdb, hashlib
+import csv, os, time, MySQLdb, hashlib
 from os.path import join, getsize
 import config
 
@@ -7,6 +7,9 @@ db = MySQLdb.connect(host=config.database["host"],
                     passwd=config.database["passwd"],
                     db=config.database["db"])
 cur = db.cursor()
+dupwriter = csv.writer(open('duplicateSummary.csv', 'w'))
+header = ['File', 'File Size (bytes)', '# of Duplicates', 'Duplicate Location(s)', 'Comments']
+dupwriter.writerow(header)
 
 ### make a list of all hashes
 
@@ -29,25 +32,25 @@ for hashnum in hashlist:
 
 ## if there is more than one result then keep it, order with most recently accessed on top
     if numDupes[0] > 1:
-        cur.execute('SELECT rootpath, relativepath, filename, modified, accessed FROM files WHERE sha1=%s ORDER BY accessed ASC', t)
+        cur.execute('SELECT rootpath, relativepath, filename, modified, accessed, bytes FROM files WHERE sha1=%s ORDER BY accessed ASC', t)
         results = cur.fetchall()
 
         count = 1
+        duplicateLocations = ''
 
         for result in results:
 
             if count == 1:
-                print("""
-Filename: {}
-Total # Duplicates {}
+                primeFile = ("""Filename: {}
 Last Accessed: {}
-Reccomend Keeping Location: {}
--------------------------------------------
-Additional Duplicates
-""".format(result[2], numDupes[0], result[4], result[1])
+Location: {}
+""".format(result[2], result[4], result[1])
 )
                 count += 1
             else:
-                print(' {}.  Location: {}{}'.format(count, result[1], result[2]))
+                duplicateLocations += ' {}.  {}{} \n'.format(count, result[0], result[1])
                 count += 1
+
+        rowInput = [primeFile, result[5], numDupes[0], duplicateLocations]
+        dupwriter.writerow(rowInput)
 
