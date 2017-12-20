@@ -55,6 +55,7 @@ for hashnum in hashlist:
         duplicateLocations = ''
         filesize = 0
         removedfilecount = 0
+        headers = ['File', 'Moved to']
 
         for result in results:
             if count == 1:
@@ -65,7 +66,7 @@ for hashnum in hashlist:
                 filepath = "{}{}".format(result[0], result[1])
                 currentFolder = (result[1][:result[1].rfind('/')])
                 filesize += result[5]
-                log = "{}{}/MOVED_FILES.txt".format(result[0], currentFolder)
+                log = "{}{}/MOVED_FILES.csv".format(result[0], currentFolder)
 
                 query = """
                 INSERT INTO removedDuplicates
@@ -99,7 +100,8 @@ for hashnum in hashlist:
                 if os.path.isfile(log):
                     try:
                         with open(log, "ab") as myfile:
-                            myfile.write("File:{} Moved to:{}\n".format(result[2], primeFileLocation))
+                            logwriter = csv.writer(myfile)
+                            logwriter.writerow([result[2], primeFileLocation])
                     except IOError as e:
                         print(e)
                     print("*Deleted: {} (Adding to folder's breadcrumbs)".format(filepath))
@@ -107,10 +109,13 @@ for hashnum in hashlist:
                 else:
                     try:
                         with open(log, "wb") as myfile:
-                            myfile.write("File:{} Moved to:{}\n".format(result[2], primeFileLocation))
+                            logwriter = csv.writer(myfile)
+                            logwriter.writerow(headers)
+                            logwriter.writerow([result[2], primeFileLocation])
                     except IOError as e:
                         print(e)
                     print("*Deleted: {} (Creating breadcrumbs)".format(filepath))
+
 
                 count += 1
 
