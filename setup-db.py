@@ -51,6 +51,7 @@ print "Create `files` table..."
 cur.execute("""
 CREATE TABLE files (
   id int unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  fullpath varchar(255) binary NOT NULL,
   rootpath varchar(255) binary NOT NULL,
   relativepath varchar(255) binary NOT NULL,
   filename varchar(255) binary NOT NULL,
@@ -61,6 +62,7 @@ CREATE TABLE files (
   created varchar(19),
   modified varchar(19),
   accessed varchar(19),
+  owner varchar(19),
   is_dupe tinyint
 );
 
