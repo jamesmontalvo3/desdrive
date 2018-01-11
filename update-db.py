@@ -1,5 +1,4 @@
-#If file is does not exist in database then add it as normal
-#all of these processes will need a new column for total path.
+
 
 import os, time, MySQLdb, hashlib
 from os.path import join, getsize
@@ -11,17 +10,16 @@ db = MySQLdb.connect(host=config.database["host"],
                     db=config.database["db"])
 cur = db.cursor()
 
-cur.execute("""
-SELECT * FROM files
-""")
+cur.execute("SELECT * FROM files")
 
 rows = cur.fetchall()
+deleteCount = 0
+addCount = 0
 
-#Check to see if any files were deleted, if so, remove them from the database
-
-#Scan through all files, check files found to see if the filepath, name, bytes and last modified are all the same. If they are then skip this file without doing anything to the database
+print "FINDING OUTDATED ENTRIES TO REMOVE FROM ZENDIR DB"
 for row in rows:
     fullpath = row[1]
+    #Check to see if any files were deleted, if so, remove them from the database
     if os.path.isfile(row[1]):
         #check to see if byte, modified date are same
         #currently stored info
@@ -48,20 +46,39 @@ for row in rows:
             pass
         else:
             #we'll delete the entry and it will be added again in a few minutes
-            pass
-            print "this would have been deleted due descripency between dates or size"
+            try:
+                cur.execute("DELETE FROM files WHERE id=%s LIMIT 1", (row[0], ) )
+                db.commit()
+            except MySQLdb.Error, e:
+                try:
+                    print "MySQL Error [%d]: %s" % (e.args[0], e.args[1])
+                except IndexError:
+                    deleteCount += 1
+                    print "MySQL Error: %s" % str(e)
+            print "existing {} does not match db, deleted. This will be added again at the end of the update".format(row[4])
 
     else:
         #delete this entry from db
-        pass
-        print "this would have been deleted due to it not exisitng"
+        try:
+            cur.execute("DELETE FROM files WHERE id=%s LIMIT 1", (row[0], ) )
+            db.commit()
+        except MySQLdb.Error, e:
+            try:
+                print "MySQL Error [%d]: %s" % (e.args[0], e.args[1])
+            except IndexError:
+                print "MySQL Error: %s" % str(e)
+        deleteCount += 1
+        print 'DELETED:"{}" (no longer exists)'.format(row[4])
 
-print "Removed outdated db entries"
-# Close communication with the database. May be required prior to next part
 cur.close()
+print "TOTAL:"
+print "------"
+print "Removed {} outdated db entries".format(deleteCount)
 
-print "Updating database..."
-cur = db.cursor() # make a new one...
+
+
+print "\nSCANNING FOR NEW FILES\n"
+cur = db.cursor()
 
 rootpath = config.directoryToAnalyze
 print "Scanning files at ", rootpath
@@ -71,11 +88,7 @@ for dirpath, dirs, files in os.walk(rootpath):
         filepath = join(dirpath, filename)
         #import pdb; pdb.set_trace()
 
-        query = """
-            SELECT COUNT(1) FROM files
-            WHERE fullpath = %s
-            """
-
+        query = "SELECT COUNT(1) FROM files WHERE fullpath = %s"
         field_inserts = (filepath, )
 
         try:
@@ -90,7 +103,7 @@ for dirpath, dirs, files in os.walk(rootpath):
         dbResult = cur.fetchone()[0]
 
         if dbResult:
-            print "This already exists so we're skipping"
+            #file already exists in db so skip it
             pass
 
         else:
@@ -129,16 +142,13 @@ for dirpath, dirs, files in os.walk(rootpath):
             created = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(stats.st_ctime))
             modified = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(stats.st_mtime))
             accessed = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(stats.st_atime))
-            owner = stats.st_uid
 
             query = """
                 INSERT INTO files
-                (fullpath,rootpath,relativepath,filename,extension,bytes,created,modified,accessed, owner)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (fullpath,rootpath,relativepath,filename,extension,bytes,created,modified,accessed)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
-            field_inserts = (filepath,rootpath,relativepath,filename,extension,bytes,created,modified,accessed, owner)
-
-            print query % field_inserts
+            field_inserts = (filepath,rootpath,relativepath,filename,extension,bytes,created,modified,accessed)
 
             try:
                 cur.execute(query, field_inserts)
@@ -148,19 +158,20 @@ for dirpath, dirs, files in os.walk(rootpath):
                     print "MySQL Error [%d]: %s" % (e.args[0], e.args[1])
                 except IndexError:
                     print "MySQL Error: %s" % str(e)
+            addCount += 1
 
+    print "Complete with directory", dirpath
 
-        print "Complete with directory", dirpath
-
-    # Close communication with the database. May be required prior to next part
 cur.close()
-
 
 #
 # This needs to be done after the files have been scanned
 #
-print "generating directories..."
+print "\nBUILDING DIRECTORIES DATABASE\n"
 cur = db.cursor() # make a new one...
+#wipe all data from current table
+cur.execute("DELETE FROM directories")
+db.commit()
 
 cur.execute("""
 SELECT relativepath FROM files
@@ -175,21 +186,21 @@ for row in rows:
     if dir in dirs:
         dirs[dir] += 1
     else:
-        print "NEW directory: {0}".format(dir)
+        print "ADDED DIRECTORY: {0}".format(dir)
         dirs[dir] = 1
 
-print "\nCOMPLETE SCAN, START INSERT\n"
-
+print "\nCOMPLETE SCAN, START INSERTING DIRECTORY DATA\n"
+totalDirs = len(dirs)
+dirCount = 0
 for dir in dirs:
     if dir == "":
         dir = "<root>"
-    # else:
-    #   dir = MySQLdb.escape_string(dir)
-    print dir
-    print "INSERTING dir: {0}".format(dir)
+
+    dirCount += 1
+    print "{} ({}/{})".format(dir, dirCount, totalDirs)
+
     try:
-        #this needs to be worked on it, it isn't actually working
-        cur.execute( "INSERT INTO directories (path) VALUES ( %(dir)s ) ON DUPLICATE KEY UPDATE path ", { 'dir': dir } )
+        cur.execute( "INSERT INTO directories (path) VALUES ( %(dir)s )", { 'dir': dir } )
         db.commit()
     except MySQLdb.Error, e:
         try:
@@ -197,10 +208,12 @@ for dir in dirs:
         except IndexError:
             print "MySQL Error: %s" % str(e)
 
-# Close communication with the database
 cur.close()
 
 print "complete generating directory listings"
+print "{} files removed".format(deleteCount)
+print "{} files added".format(addCount)
+
 
 
 

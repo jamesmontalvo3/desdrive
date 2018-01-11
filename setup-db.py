@@ -62,7 +62,6 @@ CREATE TABLE files (
   created varchar(19),
   modified varchar(19),
   accessed varchar(19),
-  owner varchar(19),
   is_dupe tinyint
 );
 

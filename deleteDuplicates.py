@@ -121,10 +121,9 @@ for hashnum in hashlist:
 
         #Print out what was deleted
         totalbytesremoved += filesize
-        gbsremoved = totalbytesremoved/1000000000
         totalremovedfiles += removedfilecount
         print("Removed {} duplicates for {}\n".format(removedfilecount, hashnum))
 
 print('All Duplicates Removed!!')
-print('Freed up {} bytes ({} Gigabytes) of space!'.format(totalbytesremoved, gbsremoved))
+print('Freed up {} bytes of space!'.format(totalbytesremoved))
 
