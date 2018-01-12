@@ -10,6 +10,8 @@ Vagrant.configure("2") do |config|
 
     zendirVM.vm.network :private_network, ip: "192.168.56.56"
 
+    zendirVM.vm.synced_folder "/Users/kristopherfield", "/mnt/localdirectory", type: "virtualbox"
+
     zendirVM.vm.provider :virtualbox do |v|
       v.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
       v.customize ['modifyvm', :id, '--cableconnected1', 'on']
