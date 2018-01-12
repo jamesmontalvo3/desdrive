@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import os, time, MySQLdb, hashlib
+import csv, os, sys, time, MySQLdb, hashlib
 from os.path import join, getsize
 import config
 
@@ -24,13 +24,14 @@ Welcome to zendir. Choose an option below.
 1) Enter "scan" to scan/update file directory
 2) Enter "hash" to build comparison hash for files
 3) Enter "both" to perform both option 1 and 2
-4) Enter "exit" to leave this program
+4) Enter "delete" to delete all duplicates
+5) Enter "exit" to leave this program
 """)
     choice = str(raw_input("Enter scan or hash to proceed: ")).lower()
     return choice
 
 # top level directory to search (have to escape backslashes, f-u Windows)
-def scan_directory(db):
+def scan_directory(db, mountName):
 	#for update portion
 	cur = db.cursor()
 	cur.execute("SELECT * FROM files")
@@ -45,17 +46,20 @@ def scan_directory(db):
 	    if os.path.isfile(row[1]):
 	        #check to see if byte, modified date are same
 	        #currently stored info
-	        bytes = row[6]
-	        created = row[9]
-	        modified = row[10]
+	        #Changerow
+	        bytes = row[7]
+	        created = row[10]
+	        modified = row[11]
 
 	        #scanning file directory to compare
 	        try:
+	        	#Changerow
 	            checkBytes = getsize( row[1] ) # size of this file
 	        except:
 	            bytes = 0
 
 	        try:
+	        	#Changerow
 	            stats = os.stat( row[1] )
 	        except OSError, e:
 	            print("OSError: {}".format(e))
@@ -69,6 +73,7 @@ def scan_directory(db):
 	        else:
 	            #we'll delete the entry and it will be added again in a few minutes
 	            try:
+	            	#Changerow
 	                cur.execute("DELETE FROM files WHERE id=%s LIMIT 1", (row[0], ) )
 	                db.commit()
 	            except MySQLdb.Error, e:
@@ -77,11 +82,13 @@ def scan_directory(db):
 	                except IndexError:
 	                    deleteCount += 1
 	                    print "MySQL Error: %s" % str(e)
-	            print "existing {} does not match db, deleted. This will be added again at the end of the update".format(row[4])
+	            #Changerow
+	            print "existing {} does not match db, deleted. This will be added again at the end of the update".format(row[5])
 
 	    else:
 	        #delete this entry from db
 	        try:
+	        	#Changerow
 	            cur.execute("DELETE FROM files WHERE id=%s LIMIT 1", (row[0], ) )
 	            db.commit()
 	        except MySQLdb.Error, e:
@@ -90,7 +97,8 @@ def scan_directory(db):
 	            except IndexError:
 	                print "MySQL Error: %s" % str(e)
 	        deleteCount += 1
-	        print 'DELETED:"{}" (no longer exists)'.format(row[4])
+	        #Changerow
+	        print 'DELETED:"{}" (no longer exists)'.format(row[5])
 
 	cur.close()
 	print "TOTAL:"
@@ -108,7 +116,8 @@ def scan_directory(db):
 	for dirpath, dirs, files in os.walk(rootpath):
 	    for filename in files:
 	        filepath = join(dirpath, filename)
-	        #import pdb; pdb.set_trace()
+	        #path using mount name so you can display more user friendly output
+	        displaypath = mountName + filepath[4:]
 
 	        query = "SELECT COUNT(1) FROM files WHERE fullpath = %s"
 	        field_inserts = (filepath, )
@@ -167,10 +176,10 @@ def scan_directory(db):
 
 	            query = """
 	                INSERT INTO files
-	                (fullpath,rootpath,relativepath,filename,extension,bytes,created,modified,accessed)
-	                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+	                (fullpath,rootpath,relativepath,filename,extension,bytes,created,modified,accessed,displaypath)
+	                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 	                """
-	            field_inserts = (filepath,rootpath,relativepath,filename,extension,bytes,created,modified,accessed)
+	            field_inserts = (filepath,rootpath,relativepath,filename,extension,bytes,created,modified,accessed,displaypath)
 
 	            try:
 	                cur.execute(query, field_inserts)
@@ -195,10 +204,7 @@ def scan_directory(db):
 	cur.execute("DELETE FROM directories")
 	db.commit()
 
-	cur.execute("""
-	SELECT relativepath FROM files
-	""")
-
+	cur.execute("SELECT relativepath FROM files")
 	rows = cur.fetchall()
 
 	dirs = {}
@@ -247,7 +253,7 @@ def find_duplicates(db):
 	rows = cur.fetchall()
 
 	for row in rows:
-	    filepath = row[2] + row[3]
+	    filepath = row[3] + row[4]
 	    # Can't sha1 if you can't access the file
 
 	    try:
@@ -263,6 +269,7 @@ def find_duplicates(db):
 	        sha1 = "unable-to-generate-sha1"
 
 	    query = "UPDATE files SET sha1=%s, bytes=%s WHERE id=%s"
+
 	    field_inserts = (sha1, bytes, row[0])
 
 	    try:
@@ -275,7 +282,7 @@ def find_duplicates(db):
 	            print "MySQL Error: %s" % str(e)
 
 	    hashCount += 1
-	    print "Hashes for {}: {} ({}/{})".format(row[3], sha1, hashCount, hashesNeeded)
+	    print "Hashes for {}: {} ({}/{})".format(row[4], sha1, hashCount, hashesNeeded)
 
 	# Close communication with the database. May be required prior to next part
 	cur.close()
@@ -352,13 +359,144 @@ def find_duplicates(db):
 
 	print "\nHASHING AND GROUPING DUPLICATES COMPLETE!\n"
 
+def delete_duplicates(db):
+	cur = db.cursor()
+	totalbytesremoved = 0
+	totalremovedfiles = 0
+	badSha1 = False
+	badSha1Count = 0
+
+	#Create table to record files removed and where the remaining instance of the file still remains
+	try:
+	    cur.execute("""
+	    CREATE TABLE IF NOT EXISTS removedDuplicates
+	    (
+	      id int unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+	      removedFile varchar(255) binary NOT NULL,
+	      removedFrom varchar(255) binary NOT NULL,
+	      remiainingLocation varchar(255) binary NOT NULL
+	    );
+	    """
+	    )
+
+	except (MySQLdb.Error, MySQLdb.Warning) as e:
+	    print(e)
+
+	#Pull all distince shas from scanned drive and create a list of them
+	cur.execute("SELECT DISTINCT sha1 FROM files")
+
+	hashes = cur.fetchall()
+	hashlist = []
+	for hashnum in hashes:
+		#don't add bad sha1 to list
+		if hashnum == "unable-to-generate-sha1":
+			badSha1Count += 1
+			badSha1 = True
+		else:
+			hashlist += hashnum
+
+	#Query for each hash
+	for hashnum in hashlist:
+	    t = (hashnum, )
+
+	#Check if there are duplicates with that hash
+	    cur.execute('SELECT COUNT(*) FROM files WHERE sha1=%s', t)
+	    numDupes = cur.fetchone()
+
+	#If there is more than one then query for all duplicates of said has and order them by date accessed (most recent first)
+	    if numDupes[0] > 1:
+	        print("Found dupicates for: {}!".format(hashnum))
+	        cur.execute('SELECT rootpath, relativepath, filename, modified, accessed, bytes, displaypath FROM files WHERE sha1=%s ORDER BY accessed ASC', t)
+	        results = cur.fetchall()
+
+	        #counter to be verify only most recently accessed of duplicate files is kept
+	        count = 1
+	        duplicateLocations = ''
+	        filesize = 0
+	        removedfilecount = 0
+	        headers = ['File', 'Moved to']
+
+	        for result in results:
+	            if count == 1:
+	                primeFileLocation = result[6]
+	                count += 1
+	                print("*Keeping: {}".format(primeFileLocation))
+	            else:
+	                filepath = "{}{}".format(result[0], result[1])
+	                currentFolder = (result[1][:result[1].rfind('/')])
+	                filesize += result[5]
+	                log = "{}{}/MOVED_FILES.csv".format(result[0], currentFolder)
+
+	                query = """
+	                INSERT INTO removedDuplicates
+	                (removedFile, removedFrom, remiainingLocation)
+	                VALUES (%s, %s, %s)
+	                """
+
+	                field_inserts = (result[2], filepath, primeFileLocation)
+
+	                #Build database of files we removed and where the remaining file exists
+	                try:
+	                    cur.execute(query, field_inserts)
+	                    db.commit()
+	                except MySQLdb.Error, e:
+	                    try:
+	                        print "MySQL Error [%d]: %s" % (e.args[0], e.args[1])
+	                    except IndexError:
+	                        print "MySQL Error: %s" % str(e)
+
+	                #Time to actually delete the duplicate
+	                try:
+	                    os.remove(filepath)
+	                except OSError as e:
+	                    print(e)
+	                    print("Couldn't remove file: {}".format(filepath))
+
+	                removedfilecount += 1
+
+	                #Add MOVED_FILES to folder with file path to kept file. If MOVED_FILES already exists then just append to it.
+	                if os.path.isfile(log):
+	                    try:
+	                        with open(log, "ab") as myfile:
+	                            logwriter = csv.writer(myfile)
+	                            logwriter.writerow([result[2], primeFileLocation])
+	                    except IOError as e:
+	                        print(e)
+	                    print("*Deleted: {} (Adding to folder's breadcrumbs)".format(filepath))
+
+	                else:
+	                    try:
+	                        with open(log, "wb") as myfile:
+	                            logwriter = csv.writer(myfile)
+	                            logwriter.writerow(headers)
+	                            logwriter.writerow([result[2], primeFileLocation])
+	                    except IOError as e:
+	                        print(e)
+	                    print("*Deleted: {} (Creating breadcrumbs)".format(filepath))
+
+	                count += 1
+
+	        #Print out what was deleted
+	        totalbytesremoved += filesize
+	        totalremovedfiles += removedfilecount
+	        print("Removed {} duplicates for {}\n".format(removedfilecount, hashnum))
+
+	print('All Duplicates Removed!!')
+	print('Freed up {} bytes of space!'.format(totalbytesremoved))
+	if badSha1 == True:
+		print("There are {} files with corrupt a sha1, these weren't deleted".format(badSha1Count))
+
+
 ACTIVE = True
 clear()
 while ACTIVE is True:
 	choice = menu()
 	if choice == 'scan' or choice == 'both':
-		scan_directory(db)
+		scan_directory(db, config.mountName)
 	if choice == 'hash' or choice == 'both':
 		find_duplicates(db)
+	if choice == 'delete':
+		if raw_input("Are you sure you want to delete all duplicates? [y/N]: ").lower() == "y":
+			delete_duplicates(db)
 	if choice == 'exit':
 		ACTIVE = False

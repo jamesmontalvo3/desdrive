@@ -52,6 +52,7 @@ cur.execute("""
 CREATE TABLE files (
   id int unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
   fullpath varchar(255) binary NOT NULL,
+  displaypath varchar(255) binary NOT NULL,
   rootpath varchar(255) binary NOT NULL,
   relativepath varchar(255) binary NOT NULL,
   filename varchar(255) binary NOT NULL,
